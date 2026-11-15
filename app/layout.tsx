@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { Analytics } from "@vercel/analytics/next";
 import { Nav } from "@/components/Nav";
 import "@fontsource/saira/400.css";
 import "@fontsource/saira/500.css";
@@ -34,6 +35,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             Fall 2026 regular season. Data from the FACEIT Data API. Not affiliated with NECC or FACEIT.
           </div>
         </footer>
+        {/* Vercel Web Analytics: counts visitors and page views on the deployed site. */}
+        <Suspense fallback={null}>
+          <Analytics />
+        </Suspense>
       </body>
     </html>
   );
