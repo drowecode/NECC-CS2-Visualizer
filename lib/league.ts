@@ -242,9 +242,11 @@ export function buildDivision(
 
 /* ---------- Standings ---------- */
 
-/** Teams per group that advance to playoffs: 4 in Divisions 1 and 3, 2 in Divisions 2 and 4. */
+/** Teams per group that advance to playoffs, by division. Every division takes the top 4. */
+const PLAYOFF_SPOTS: Record<number, number> = { 1: 4, 2: 4, 3: 4, 4: 4 };
+
 export function playoffSpots(division: number): number {
-  return division === 1 || division === 3 ? 4 : 2;
+  return PLAYOFF_SPOTS[division] ?? 4;
 }
 
 function emptyStanding(team: Team): Standing {
