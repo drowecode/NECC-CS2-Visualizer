@@ -126,8 +126,14 @@ export class FaceitError extends Error {
   }
 }
 
-const MIN_GAP_MS = 40; // requests start at most 25 times per second
-const MAX_ATTEMPTS = 5;
+// FACEIT answers HTTP 429 when requests come too fast. 10 per second has
+// proved safe; 25 per second was rejected.
+const MIN_GAP_MS = 100;
+const MAX_ATTEMPTS = 6;
+/** Longest single wait after FACEIT says to slow down. */
+const MAX_BACKOFF_MS = 8000;
+/** How long one request may take before it is abandoned and retried. */
+const REQUEST_TIMEOUT_MS = 15000;
 
 let nextSlot = 0;
 
@@ -143,6 +149,14 @@ async function waitForSlot(): Promise<void> {
   const slot = Math.max(now, nextSlot);
   nextSlot = slot + MIN_GAP_MS;
   if (slot > now) await sleep(slot - now);
+}
+
+/**
+ * Holds back every request, not just the one that failed, so the whole site
+ * stops asking while FACEIT is rate limiting.
+ */
+function pauseAllRequests(ms: number): void {
+  nextSlot = Math.max(nextSlot, Date.now() + ms);
 }
 
 export function hasApiKey(): boolean {
@@ -162,6 +176,11 @@ async function request<T>(path: string): Promise<T> {
       const response = await fetch(`${BASE_URL}${path}`, {
         headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
         cache: "no-store",
+        // The signal does two jobs. It gives up on a request that hangs, and it
+        // stops React from reusing an earlier response for the same URL: without
+        // it, every retry inside a page render would be handed the same failed
+        // (for example rate-limited) response instead of asking FACEIT again.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (response.ok) return (await response.json()) as T;
@@ -178,6 +197,13 @@ async function request<T>(path: string): Promise<T> {
 
       lastError = new FaceitError(`FACEIT returned HTTP ${response.status} for ${path}`, response.status);
       if (response.status !== 429 && response.status < 500) throw lastError;
+      if (response.status === 429) {
+        // Rate limited: wait as long as FACEIT asks (or 2s, 4s, 8s, ...) and make everyone else wait too.
+        const asked = Number(response.headers.get("retry-after")) * 1000;
+        const wait = Math.min(MAX_BACKOFF_MS, Math.max(Number.isFinite(asked) ? asked : 0, 2000 * 2 ** (attempt - 1)));
+        pauseAllRequests(wait);
+        continue;
+      }
     } catch (error) {
       if (error instanceof FaceitError) {
         const retryable = error.status === 429 || (error.status ?? 0) >= 500;
@@ -187,8 +213,8 @@ async function request<T>(path: string): Promise<T> {
         lastError = new FaceitError(`Network error calling FACEIT: ${(error as Error).message}`);
       }
     }
-    // Back off: 1s, 2s, 4s, 8s.
-    if (attempt < MAX_ATTEMPTS) await sleep(1000 * 2 ** (attempt - 1));
+    // Server or network error: back off 1s, 2s, 4s, 8s before trying again.
+    if (attempt < MAX_ATTEMPTS) await sleep(Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempt - 1)));
   }
   throw lastError ?? new FaceitError(`Request failed: ${path}`);
 }
