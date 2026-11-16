@@ -12,7 +12,8 @@ const nextConfig: NextConfig = {
     },
   },
   async redirects() {
-    return [{ source: "/", destination: "/rankings", permanent: false }];
+    // The playoffs page used to live at /brackets.
+    return [{ source: "/brackets", destination: "/playoffs", permanent: false }];
   },
 };
 

@@ -21,7 +21,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col">
         <header className="border-b border-line">
           <div className="mx-auto flex w-full max-w-6xl flex-wrap items-end gap-x-10 gap-y-2 px-4 pt-4">
-            <Link href="/rankings" className="pb-3 font-display text-2xl font-bold leading-none tracking-tight">
+            <Link href="/" className="pb-3 font-display text-2xl font-bold leading-none tracking-tight">
               NECC <span className="text-accent">CS2</span>
             </Link>
             <Suspense fallback={<div className="h-10" />}>

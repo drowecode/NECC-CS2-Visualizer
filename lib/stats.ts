@@ -50,6 +50,48 @@ function pick(stats: Record<string, string | number> | undefined, ...keys: strin
   return 0;
 }
 
+/** The only statistics the site reads. Everything else FACEIT sends is dropped before caching. */
+const ROUND_KEYS = ["Rounds", "Map"];
+const PLAYER_KEYS = [
+  "Kills",
+  "Deaths",
+  "Assists",
+  "Headshots",
+  "Headshot",
+  "Damage",
+  "ADR",
+  "MVPs",
+  "Triple Kills",
+  "Quadro Kills",
+  "Penta Kills",
+];
+
+function keep(stats: Record<string, string | number> | undefined, keys: string[]) {
+  const kept: Record<string, string | number> = {};
+  for (const key of keys) {
+    if (stats?.[key] !== undefined) kept[key] = stats[key];
+  }
+  return kept;
+}
+
+/** A much smaller copy of a match's statistics, holding only what aggregatePlayerStats uses. */
+export function slimMatchStats(stats: RawMatchStats | null): RawMatchStats | null {
+  if (!stats?.rounds) return null;
+  return {
+    rounds: stats.rounds.map((map) => ({
+      round_stats: keep(map.round_stats, ROUND_KEYS),
+      teams: (map.teams ?? []).map((team) => ({
+        team_id: team.team_id,
+        players: (team.players ?? []).map((player) => ({
+          player_id: player.player_id,
+          nickname: player.nickname,
+          player_stats: keep(player.player_stats, PLAYER_KEYS),
+        })),
+      })),
+    })),
+  };
+}
+
 /** Matches worth asking FACEIT for statistics: finished, with a map that was really played. */
 export function matchesWithPlayedMaps(division: DivisionData) {
   return division.matches.filter((match) => match.status === "finished" && match.maps.some((map) => !map.forfeit));

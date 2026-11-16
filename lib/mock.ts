@@ -6,6 +6,7 @@
 
 import type { RawMatch, RawMatchStats, RawSubscription } from "./faceit";
 import { buildDivision, type DivisionData, type League } from "./league";
+import { buildBracket, PLAYOFFS, type Bracket } from "./playoffs";
 import { matchesWithPlayedMaps } from "./stats";
 
 const SHAPE = [
@@ -162,4 +163,61 @@ export function mockMatchStats(division: DivisionData): Map<string, RawMatchStat
     });
   }
   return result;
+}
+
+/** Invented playoff brackets at different stages, to preview the playoffs page. */
+export function mockPlayoffs(): Bracket[] {
+  const league = mockLeague();
+  const random = seeded(4242);
+  const start = Date.UTC(2026, 10, 19) / 1000;
+  const used = new Map<number, number>();
+
+  return PLAYOFFS.map((info, index) => {
+    // Each bracket takes the next 8 teams of its division.
+    const offset = used.get(info.division) ?? 0;
+    used.set(info.division, offset + 8);
+    const teams = (league.divisions.find((d) => d.division === info.division)?.teams ?? []).slice(offset, offset + 8);
+    const subscriptions: RawSubscription[] = teams.map((team) => ({ team: { team_id: team.id, name: team.name } }));
+    const faction = (i: number) => ({ faction_id: teams[i].id, name: teams[i].name });
+
+    const match = (id: string, group: number, round: number, a: number, b: number, done: boolean): RawMatch => {
+      const base: RawMatch = {
+        match_id: `mock-po-${index}-${id}`,
+        group,
+        round,
+        best_of: 3,
+        scheduled_at: start + (round - 1) * 14 * 86400 + (group - 1) * 2 * 86400,
+        teams: { faction1: faction(a), faction2: faction(b) },
+      };
+      if (!done) return { ...base, status: "SCHEDULED" };
+      const third = random() < 0.4;
+      return {
+        ...base,
+        status: "FINISHED",
+        finished_at: (base.scheduled_at ?? start) + 7200,
+        results: { winner: "faction1", score: { faction1: 2, faction2: third ? 1 : 0 } },
+        detailed_results: (third ? ["faction1", "faction2", "faction1"] : ["faction1", "faction1"]).map((winner) => {
+          const loser = winner === "faction1" ? "faction2" : "faction1";
+          return { winner, factions: { [winner]: { score: 13 }, [loser]: { score: Math.floor(random() * 12) } } };
+        }),
+      };
+    };
+
+    // Stage per bracket: 0 = second round under way, 1 = teams signed up only,
+    // 2 = first round scheduled, 3 = first round half played.
+    const stage = index % 4;
+    if (teams.length < 8) return buildBracket(info, [], []);
+    if (stage === 1) return buildBracket(info, [], subscriptions);
+
+    const firstRound = [0, 2, 4, 6].map((a, i) => match(`q${i}`, 1, 1, a, a + 1, stage === 0 || (stage === 3 && i < 2)));
+    const later: RawMatch[] = [];
+    if (stage === 0) {
+      later.push(match("s0", 1, 2, 0, 2, true), match("s1", 1, 2, 4, 6, false));
+      if (info.format === "double") {
+        // Lower bracket: first-round losers meet, then the winner faces the upper semi-final loser.
+        later.push(match("l0", 2, 1, 1, 3, true), match("l1", 2, 1, 5, 7, false), match("l2", 2, 2, 1, 2, false));
+      }
+    }
+    return buildBracket(info, [...firstRound, ...later], subscriptions);
+  });
 }

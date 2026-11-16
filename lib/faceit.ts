@@ -126,7 +126,7 @@ export class FaceitError extends Error {
   }
 }
 
-const MIN_GAP_MS = 70; // requests start at most about 14 times per second
+const MIN_GAP_MS = 40; // requests start at most 25 times per second
 const MAX_ATTEMPTS = 5;
 
 let nextSlot = 0;
@@ -227,14 +227,18 @@ export type DivisionRaw = {
 
 /** Everything FACEIT has for one division: its main championship plus any extra ones. */
 export async function getDivisionRaw(info: DivisionInfo): Promise<DivisionRaw> {
-  const matches = await getChampionshipMatches(info.championshipId);
-  const subscriptions = await getChampionshipSubscriptions(info.championshipId);
-  const extra: DivisionRaw["extra"] = { matches: [], subscriptions: [] };
-  for (const id of info.extraChampionshipIds) {
-    extra.matches.push(...(await getChampionshipMatches(id)));
-    extra.subscriptions.push(...(await getChampionshipSubscriptions(id)));
-  }
-  return { matches, subscriptions, extra };
+  // Everything is requested at once; the throttle still spaces the requests out.
+  const [matches, subscriptions, extraMatches, extraSubscriptions] = await Promise.all([
+    getChampionshipMatches(info.championshipId),
+    getChampionshipSubscriptions(info.championshipId),
+    Promise.all(info.extraChampionshipIds.map((id) => getChampionshipMatches(id))),
+    Promise.all(info.extraChampionshipIds.map((id) => getChampionshipSubscriptions(id))),
+  ]);
+  return {
+    matches,
+    subscriptions,
+    extra: { matches: extraMatches.flat(), subscriptions: extraSubscriptions.flat() },
+  };
 }
 
 /* ---------- Match statistics ---------- */

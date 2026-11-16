@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import type { RawMatch } from "../lib/faceit";
 import { buildDivision, groupStandings, isDisqualified, nationalRankings } from "../lib/league";
 import { mockLeague } from "../lib/mock";
+import { bracketLabel, buildBracket } from "../lib/playoffs";
 
 const team = (id: string) => ({ faction_id: id, name: id.toUpperCase() });
 
@@ -122,6 +123,114 @@ const lateTable = groupStandings(lateDivision, 2);
 assert.equal(lateTable.length, 3);
 assert.equal(lateTable.find((row) => row.teamId === "late")?.played, 2);
 assert.equal(lateTable.find((row) => row.teamId === "late")?.matchWins, 1);
+
+// Playoff bracket: 8 teams, quarter-finals in a given order, one semi-final played.
+const quarter = (id: string, a: string, b: string): RawMatch => ({ ...played(id, a, b, [[13, 5], [13, 6]]), round: 1 });
+const bracket = buildBracket(
+  {
+    championshipId: "po",
+    division: 3,
+    region: "Test",
+    format: "single",
+    thirdPlaceMatch: true,
+    firstRoundOrder: ["k1", "k2", "k3", "k4"],
+  },
+  [
+    quarter("k3", "t5", "t6"),
+    quarter("k1", "t1", "t2"),
+    quarter("k4", "t7", "t8"),
+    quarter("k2", "t3", "t4"),
+    { ...played("k6", "t7", "t5", [[13, 9], [13, 9]]), round: 2 }, // second semi-final, listed first
+    { match_id: "k5", round: 2, status: "SCHEDULED", teams: { faction1: team("t1"), faction2: team("t3") } },
+    { match_id: "k9", round: 2, status: "SCHEDULED", teams: { faction1: team("t1") } }, // no opponent yet: ignored
+  ],
+  [],
+);
+assert.deepEqual(
+  bracket.rounds.map((round) => round.name),
+  ["Quarter-finals", "Semi-finals", "Grand final"],
+);
+assert.deepEqual(
+  bracket.rounds[0].slots.map((slot) => slot.match?.id),
+  ["k1", "k2", "k3", "k4"],
+);
+assert.deepEqual(
+  bracket.rounds[1].slots.map((slot) => slot.match?.id),
+  ["k5", "k6"],
+);
+assert.equal(bracket.rounds[2].slots[0].match, null);
+assert.equal(bracket.thirdPlace, null);
+assert.equal(bracket.state, "live");
+assert.equal(bracket.teams.length, 8);
+
+// With a 3rd place match, FACEIT round 3 is that match and round 4 is the final.
+const finished = buildBracket(
+  { championshipId: "po2", division: 3, region: "Test", format: "single", thirdPlaceMatch: true },
+  [
+    quarter("f1", "t1", "t2"),
+    quarter("f2", "t3", "t4"),
+    quarter("f3", "t5", "t6"),
+    quarter("f4", "t7", "t8"),
+    { ...played("f5", "t1", "t3", [[13, 9], [13, 9]]), round: 2 },
+    { ...played("f6", "t5", "t7", [[13, 9], [13, 9]]), round: 2 },
+    { ...played("f7", "t3", "t7", [[13, 9], [13, 9]]), round: 3 },
+    { ...played("f8", "t1", "t5", [[13, 9], [13, 9]]), round: 4 },
+  ],
+  [],
+);
+assert.equal(finished.thirdPlace?.id, "f7");
+assert.equal(finished.rounds[2].slots[0].match?.id, "f8");
+assert.equal(finished.state, "finished");
+
+// A bracket with sign-ups but no matches has teams and no rounds.
+const undrawn = buildBracket({ championshipId: "po3", division: 2, region: "Test", format: "single", thirdPlaceMatch: true }, [], [
+  { team: { team_id: "a", name: "A" } },
+]);
+assert.equal(undrawn.rounds.length, 0);
+assert.equal(undrawn.state, "not-started");
+assert.equal(undrawn.teams.length, 1);
+
+// Double elimination: FACEIT group 1 is the upper bracket, 2 the lower bracket, 3 the grand final.
+const inGroup = (m: RawMatch, group: number, round: number): RawMatch => ({ ...m, group, round });
+const doubleBracket = buildBracket(
+  { championshipId: "de", division: 1, region: "", format: "double", firstRoundOrder: ["d1", "d2", "d3", "d4"] },
+  [
+    inGroup(played("d1", "t1", "t2", [[13, 5], [13, 6]]), 1, 1),
+    inGroup(played("d2", "t3", "t4", [[13, 5], [13, 6]]), 1, 1),
+    inGroup(played("d3", "t5", "t6", [[13, 5], [13, 6]]), 1, 1),
+    inGroup(played("d4", "t7", "t8", [[13, 5], [13, 6]]), 1, 1),
+    inGroup(played("d5", "t1", "t3", [[13, 5], [13, 6]]), 1, 2),
+    inGroup(played("d6", "t5", "t7", [[13, 5], [13, 6]]), 1, 2),
+    inGroup(played("d7", "t1", "t5", [[13, 5], [13, 6]]), 1, 3), // upper final
+    inGroup(played("e2", "t6", "t8", [[13, 5], [13, 6]]), 2, 1), // lower round 1, second pair listed first
+    inGroup(played("e1", "t2", "t4", [[13, 5], [13, 6]]), 2, 1),
+    inGroup(played("e3", "t2", "t7", [[13, 5], [13, 6]]), 2, 2), // t2 (lower) v t7 (upper semi-final loser)
+    inGroup(played("e4", "t3", "t6", [[13, 5], [13, 6]]), 2, 2),
+    inGroup(played("e5", "t2", "t3", [[13, 5], [13, 6]]), 2, 3),
+    inGroup(played("e6", "t5", "t2", [[13, 5], [13, 6]]), 2, 4), // lower final
+    inGroup(played("g1", "t1", "t5", [[13, 5], [13, 6]]), 3, 1),
+  ],
+  [],
+);
+assert.deepEqual(
+  doubleBracket.rounds.map((round) => round.name),
+  ["Quarter-finals", "Semi-finals", "Upper final"],
+);
+assert.equal(doubleBracket.rounds[2].slots[0].match?.id, "d7");
+assert.deepEqual(
+  doubleBracket.lowerRounds.map((round) => round.slots.map((slot) => slot.match?.id)),
+  [["e1", "e2"], ["e3", "e4"], ["e5"], ["e6"]],
+);
+assert.deepEqual(
+  doubleBracket.lowerRounds.map((round) => round.name),
+  ["Lower round 1", "Lower round 2", "Lower round 3", "Lower final"],
+);
+assert.equal(doubleBracket.grandFinal?.id, "g1");
+assert.equal(doubleBracket.grandFinalReset, null);
+assert.equal(doubleBracket.hasThirdPlace, false);
+assert.equal(doubleBracket.state, "finished");
+assert.equal(bracketLabel(doubleBracket), "Division 1");
+assert.equal(bracketLabel({ division: 2, region: "East" }), "Division 2 East");
 
 // The sample league builds and ranks every team exactly once.
 const league = mockLeague();

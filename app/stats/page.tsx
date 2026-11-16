@@ -1,13 +1,12 @@
 import { Suspense } from "react";
 import { StatsView } from "@/components/StatsView";
 import { DataError, Loading, MockBanner, PageTitle } from "@/components/ui";
-import { dataMode, getDivisionPlayerStats } from "@/lib/data";
-import { DIVISIONS } from "@/lib/faceit";
+import { dataMode, getAllPlayerStats } from "@/lib/data";
 
 export const metadata = { title: "Player stats | NECC CS2" };
 
 async function Stats() {
-  const results = await Promise.all(DIVISIONS.map((d) => getDivisionPlayerStats(d.division)));
+  const results = await getAllPlayerStats();
 
   const failed = results.find((result) => !result.ok);
   if (failed && !failed.ok) return <DataError message={failed.error} />;
