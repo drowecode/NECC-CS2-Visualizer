@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/rankings", label: "Season rankings" },
   { href: "/national", label: "National rankings" },
   { href: "/stats", label: "Player stats" },
+  { href: "/rules", label: "Rules" },
 ];
 
 export function Nav() {

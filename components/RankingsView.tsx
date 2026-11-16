@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
-import type { Standing } from "@/lib/league";
+import { FORFEIT_LIMIT, isDisqualified, type Standing } from "@/lib/league";
 import { TeamLogo } from "./TeamLogo";
 import { Diff, ForfeitTag, percent, th } from "./ui";
 
@@ -17,15 +17,18 @@ export type RankingsDivision = {
 const COLUMN_COUNT = 5;
 
 function Row({ row, qualifies }: { row: Standing; qualifies: boolean }) {
+  const disqualified = isDisqualified(row);
   return (
-    <tr className="border-b border-line hover:bg-surface">
+    <tr className={"border-b border-line hover:bg-surface " + (disqualified ? "text-muted" : "")}>
       <td
         className={
-          "px-1 py-3 text-center font-display text-2xl font-bold leading-none " +
+          "px-1 py-3 text-center font-display font-bold leading-none " +
+          (disqualified ? "text-base text-faint" : "text-2xl ") +
           (qualifies ? "text-accent" : "text-faint")
         }
+        title={disqualified ? `Disqualified from playoffs: ${row.forfeits} forfeits` : undefined}
       >
-        {row.rank}
+        {disqualified ? "DQ" : row.rank}
       </td>
       <td className="px-2 py-3 sm:px-3">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -68,6 +71,11 @@ export function RankingsView({ divisions }: { divisions: RankingsDivision[] }) {
 
   const groupNumber = groupByDivision[division.division] ?? division.groups[0]?.group;
   const group = division.groups.find((g) => g.group === groupNumber) ?? division.groups[0];
+
+  // The playoff line sits under the last qualifying team. Disqualified teams are
+  // already sorted to the bottom, so only eligible teams are counted.
+  const eligibleCount = group ? group.standings.filter((row) => !isDisqualified(row)).length : 0;
+  const playoffLineIndex = Math.min(division.playoffSpots, eligibleCount) - 1;
 
   return (
     <div>
@@ -146,8 +154,8 @@ export function RankingsView({ divisions }: { divisions: RankingsDivision[] }) {
               <tbody>
                 {group.standings.map((row, index) => (
                   <Fragment key={row.teamId}>
-                    <Row row={row} qualifies={row.rank <= division.playoffSpots} />
-                    {index === division.playoffSpots - 1 && index < group.standings.length - 1 ? (
+                    <Row row={row} qualifies={!isDisqualified(row) && row.rank <= division.playoffSpots} />
+                    {index === playoffLineIndex && index < group.standings.length - 1 ? (
                       <tr aria-hidden="true">
                         <td colSpan={COLUMN_COUNT} className="p-0">
                           <div className="flex items-center gap-3 text-xs font-medium text-accent">
@@ -166,7 +174,8 @@ export function RankingsView({ divisions }: { divisions: RankingsDivision[] }) {
           <p className="mt-4 max-w-[75ch] text-sm text-faint">
             The top {division.playoffSpots} teams in each {division.name} group make playoffs. Ties are broken by match
             wins, then map differential, round differential and head-to-head record. Forfeited maps count toward match
-            and map records but add no rounds.
+            and map records but add no rounds. A team with {FORFEIT_LIMIT} or more forfeited matches is disqualified
+            from playoffs and listed last, marked DQ, and the teams below it move up.
           </p>
         </>
       ) : (

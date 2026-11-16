@@ -327,12 +327,23 @@ export function compareStandings(matches: Match[]) {
     a.teamName.localeCompare(b.teamName);
 }
 
-/** Ranked standings for one group of a division. */
+/** A team that has forfeited this many whole matches is disqualified from playoffs. */
+export const FORFEIT_LIMIT = 2;
+
+export function isDisqualified(record: { forfeits: number }): boolean {
+  return record.forfeits >= FORFEIT_LIMIT;
+}
+
+/**
+ * Ranked standings for one group of a division. Disqualified teams drop to
+ * the bottom of the group, so every eligible team below them moves up.
+ */
 export function groupStandings(division: DivisionData, group: number): Standing[] {
   const records = computeRecords(division);
+  const byRecord = compareStandings(division.matches);
   return [...records.values()]
     .filter((record) => record.group === group)
-    .sort(compareStandings(division.matches))
+    .sort((a, b) => Number(isDisqualified(a)) - Number(isDisqualified(b)) || byRecord(a, b))
     .map((record, index) => ({ ...record, rank: index + 1 }));
 }
 

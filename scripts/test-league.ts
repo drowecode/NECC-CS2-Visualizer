@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import type { RawMatch } from "../lib/faceit";
-import { buildDivision, groupStandings, nationalRankings } from "../lib/league";
+import { buildDivision, groupStandings, isDisqualified, nationalRankings } from "../lib/league";
 import { mockLeague } from "../lib/mock";
 
 const team = (id: string) => ({ faction_id: id, name: id.toUpperCase() });
@@ -67,6 +67,31 @@ assert.equal(table[3].teamId, "d");
 // b and c both have 1 win; c has the better map differential (3-2 vs 2-3... c: +1, b: -1).
 assert.equal(table[1].teamId, "c");
 assert.equal(table[2].teamId, "b");
+
+// A team with 2 forfeits is disqualified: it drops to the bottom and the others move up.
+const dqMatches: RawMatch[] = [
+  played("q1", "w", "x", [[13, 2], [13, 3]]), // w beats x
+  played("q2", "w", "y", [[13, 4], [13, 5]]), // w beats y
+  played("q3", "w", "z", [[13, 6], [13, 7]]), // w beats z, so w has the best record
+  played("q4", "x", "w", [[1, 0], [1, 0]]), // w forfeits to x
+  played("q5", "y", "w", [[1, 0], [1, 0]]), // w forfeits to y
+  played("q6", "x", "y", [[13, 9], [13, 9]]), // x beats y
+  played("q7", "z", "x", [[0, 1], [0, 1]]), // z forfeits once: still eligible
+];
+const dqTable = groupStandings(buildDivision({ division: 2, name: "Division 2", championshipId: "y" }, dqMatches, []), 1);
+assert.deepEqual(
+  dqTable.map((row) => row.teamId),
+  ["x", "y", "z", "w"],
+);
+assert.deepEqual(
+  dqTable.map((row) => isDisqualified(row)),
+  [false, false, false, true],
+);
+assert.equal(dqTable[3].matchWins, 3); // w keeps its record, it is only moved down
+assert.deepEqual(
+  dqTable.map((row) => row.rank),
+  [1, 2, 3, 4],
+);
 
 // The sample league builds and ranks every team exactly once.
 const league = mockLeague();

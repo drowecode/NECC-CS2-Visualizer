@@ -4,7 +4,14 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { DataError, Diff, Loading, MockBanner, percent, th } from "@/components/ui";
 import { StatsView } from "@/components/StatsView";
 import { dataMode, getDivisionPlayerStats, getLeague } from "@/lib/data";
-import { computeRecords, findTeam, groupStandings, playoffSpots, type Match } from "@/lib/league";
+import {
+  computeRecords,
+  findTeam,
+  groupStandings,
+  isDisqualified,
+  playoffSpots,
+  type Match,
+} from "@/lib/league";
 
 const h2 = "mb-2 mt-10 font-display text-2xl font-semibold";
 
@@ -120,7 +127,12 @@ async function TeamDetails({ params }: Pick<PageProps<"/team/[teamId]">, "params
           <p className="mt-2 text-muted">
             {division.name}
             {team.group !== null ? `, group ${team.group}` : ""}
-            {rank ? (
+            {record && isDisqualified(record) ? (
+              <>
+                {", "}
+                <span className="text-accent">disqualified from playoffs ({record.forfeits} forfeits)</span>
+              </>
+            ) : rank ? (
               <>
                 {", "}
                 <span className={rank <= playoffSpots(division.division) ? "text-accent" : ""}>
