@@ -12,13 +12,52 @@
 // FACEIT_API_BASE is only for pointing tests at a local stand-in server.
 const BASE_URL = process.env.FACEIT_API_BASE?.trim() || "https://open.faceit.com/data/v4";
 
+export type DivisionInfo = {
+  division: number;
+  name: string;
+  championshipId: string;
+  /**
+   * Extra FACEIT championships whose matches count toward this division.
+   * Used for matches that were played outside the main championship.
+   */
+  extraChampionshipIds: string[];
+};
+
 /** The four NECC Fall 2026 CS2 championships. */
-export const DIVISIONS = [
-  { division: 1, name: "Division 1", championshipId: "e2497840-ac7a-46f3-bfc7-82f13bfbf9c4" },
-  { division: 2, name: "Division 2", championshipId: "e1c831e0-0be2-4d12-acf4-a621453e881f" },
-  { division: 3, name: "Division 3", championshipId: "74a64284-61ba-4de5-a47c-d4475dd4ea53" },
-  { division: 4, name: "Division 4", championshipId: "c7ba4f3b-ca6b-47f3-9f3f-34e6b343108f" },
-] as const;
+export const DIVISIONS: DivisionInfo[] = [
+  {
+    division: 1,
+    name: "Division 1",
+    championshipId: "e2497840-ac7a-46f3-bfc7-82f13bfbf9c4",
+    extraChampionshipIds: [],
+  },
+  {
+    division: 2,
+    name: "Division 2",
+    championshipId: "e1c831e0-0be2-4d12-acf4-a621453e881f",
+    // K-State Varsity joined Group 2 late; each of its matches is its own "ext" championship.
+    extraChampionshipIds: [
+      "dd741fc4-8f7f-459d-87e0-20470d10e14a", // ext LSU
+      "5ef75d57-429f-4b1b-a209-0f79ccaf97ca", // ext UH RED
+      "f3506ba8-c81c-43d4-89fc-92eb77a8b584", // ext North Georgia 2
+      "316e5c21-0709-4e3b-91ca-bd8359f22374", // ext IE CS BLUE
+      "aea8caf6-17a9-489c-8f70-1f01b758f409", // ext TTU
+      "01cb49f1-bf12-4382-9eba-88740e7e9e9d", // ext TAMU
+    ],
+  },
+  {
+    division: 3,
+    name: "Division 3",
+    championshipId: "74a64284-61ba-4de5-a47c-d4475dd4ea53",
+    extraChampionshipIds: [],
+  },
+  {
+    division: 4,
+    name: "Division 4",
+    championshipId: "c7ba4f3b-ca6b-47f3-9f3f-34e6b343108f",
+    extraChampionshipIds: [],
+  },
+];
 
 /* ---------- Raw response types (only the fields this site uses) ---------- */
 
@@ -177,6 +216,25 @@ export function getChampionshipMatches(championshipId: string): Promise<RawMatch
 export function getChampionshipSubscriptions(championshipId: string): Promise<RawSubscription[]> {
   // This endpoint allows at most 10 items per page.
   return fetchAllPages<RawSubscription>(`/championships/${championshipId}/subscriptions`, 10);
+}
+
+export type DivisionRaw = {
+  matches: RawMatch[];
+  subscriptions: RawSubscription[];
+  /** Matches and teams from the division's extra championships. */
+  extra: { matches: RawMatch[]; subscriptions: RawSubscription[] };
+};
+
+/** Everything FACEIT has for one division: its main championship plus any extra ones. */
+export async function getDivisionRaw(info: DivisionInfo): Promise<DivisionRaw> {
+  const matches = await getChampionshipMatches(info.championshipId);
+  const subscriptions = await getChampionshipSubscriptions(info.championshipId);
+  const extra: DivisionRaw["extra"] = { matches: [], subscriptions: [] };
+  for (const id of info.extraChampionshipIds) {
+    extra.matches.push(...(await getChampionshipMatches(id)));
+    extra.subscriptions.push(...(await getChampionshipSubscriptions(id)));
+  }
+  return { matches, subscriptions, extra };
 }
 
 /* ---------- Match statistics ---------- */

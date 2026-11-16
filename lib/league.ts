@@ -176,17 +176,30 @@ export function normaliseMatch(raw: RawMatch, division: number): Match | null {
   };
 }
 
+export type ExtraRaw = { matches: RawMatch[]; subscriptions: RawSubscription[] };
+
+function membersOf(sub: RawSubscription): Member[] {
+  return (sub.team?.members ?? [])
+    .filter((m) => m.user_id)
+    .map((m) => ({ id: m.user_id as string, nickname: m.nickname ?? "?" }));
+}
+
+/**
+ * Builds one division from its main championship, plus matches played in
+ * extra championships (see DivisionInfo.extraChampionshipIds).
+ *
+ * An extra championship has its own group and round numbers, which mean
+ * nothing in the division. Each extra match is therefore placed in the group
+ * of whichever of its two teams is already in the division, and takes the
+ * round of that team's "bye" match, since the late team fills the bye slot.
+ */
 export function buildDivision(
   info: { division: number; name: string; championshipId: string },
   allRawMatches: RawMatch[],
   rawSubscriptions: RawSubscription[],
+  extra: ExtraRaw = { matches: [], subscriptions: [] },
 ): DivisionData {
-  const rawMatches = allRawMatches.filter((raw) => !involvesBye(raw));
-  const matches = rawMatches
-    .map((raw) => normaliseMatch(raw, info.division))
-    .filter((m): m is Match => m !== null)
-    .sort((x, y) => (x.scheduledAt ?? 0) - (y.scheduledAt ?? 0));
-
+  const mainMatches = allRawMatches.filter((raw) => !involvesBye(raw));
   const teams = new Map<string, Team>();
 
   for (const sub of rawSubscriptions) {
@@ -198,35 +211,76 @@ export function buildDivision(
       avatar: sub.team?.avatar || null,
       division: info.division,
       group: sub.group ?? null,
-      members: (sub.team?.members ?? [])
-        .filter((m) => m.user_id)
-        .map((m) => ({ id: m.user_id as string, nickname: m.nickname ?? "?" })),
+      members: membersOf(sub),
     });
   }
 
   // Fill in anything the subscriptions list did not give us from the matches.
-  for (const raw of rawMatches) {
-    for (const key of FACTIONS) {
-      const faction = raw.teams?.[key];
-      if (!faction?.faction_id) continue;
-      const existing = teams.get(faction.faction_id);
-      if (!existing) {
-        teams.set(faction.faction_id, {
-          id: faction.faction_id,
-          name: faction.name ?? "Unknown team",
-          avatar: faction.avatar || null,
-          division: info.division,
-          group: raw.group ?? null,
-          members: (faction.roster ?? [])
-            .filter((p) => p.player_id)
-            .map((p) => ({ id: p.player_id as string, nickname: p.nickname ?? "?" })),
-        });
-      } else {
-        if (existing.group === null && raw.group != null) existing.group = raw.group;
-        if (!existing.avatar && faction.avatar) existing.avatar = faction.avatar;
+  const addTeamsFrom = (rawMatches: RawMatch[]) => {
+    for (const raw of rawMatches) {
+      for (const key of FACTIONS) {
+        const faction = raw.teams?.[key];
+        if (!faction?.faction_id) continue;
+        const existing = teams.get(faction.faction_id);
+        if (!existing) {
+          teams.set(faction.faction_id, {
+            id: faction.faction_id,
+            name: faction.name ?? "Unknown team",
+            avatar: faction.avatar || null,
+            division: info.division,
+            group: raw.group ?? null,
+            members: (faction.roster ?? [])
+              .filter((p) => p.player_id)
+              .map((p) => ({ id: p.player_id as string, nickname: p.nickname ?? "?" })),
+          });
+        } else {
+          if (existing.group === null && raw.group != null) existing.group = raw.group;
+          if (!existing.avatar && faction.avatar) existing.avatar = faction.avatar;
+        }
       }
     }
+  };
+  addTeamsFrom(mainMatches);
+
+  // Which round each team had its bye in, so an extra match can take that round.
+  const byeRounds = new Map<string, number>();
+  for (const raw of allRawMatches) {
+    if (!involvesBye(raw) || raw.round == null) continue;
+    for (const key of FACTIONS) {
+      const faction = raw.teams?.[key];
+      if (faction?.faction_id && !isBye(faction.name)) byeRounds.set(faction.faction_id, raw.round);
+    }
   }
+
+  const mainIds = new Set(mainMatches.map((raw) => raw.match_id));
+  const extraMatches = extra.matches
+    .filter((raw) => !involvesBye(raw) && !mainIds.has(raw.match_id))
+    .map((raw): RawMatch => {
+      const anchor = FACTIONS.map((key) => raw.teams?.[key]?.faction_id).find((id) => id && teams.has(id));
+      if (!anchor) return raw; // neither team is in the division: keep FACEIT's own numbers
+      return { ...raw, group: teams.get(anchor)?.group ?? undefined, round: byeRounds.get(anchor) };
+    });
+
+  // Teams that only exist in an extra championship get their roster from it,
+  // and their group from the matches they played (set by addTeamsFrom below).
+  for (const sub of extra.subscriptions) {
+    const id = sub.team?.team_id;
+    if (!id || isBye(sub.team?.name) || teams.has(id)) continue;
+    teams.set(id, {
+      id,
+      name: sub.team?.name ?? "Unknown team",
+      avatar: sub.team?.avatar || null,
+      division: info.division,
+      group: null,
+      members: membersOf(sub),
+    });
+  }
+  addTeamsFrom(extraMatches);
+
+  const matches = [...mainMatches, ...extraMatches]
+    .map((raw) => normaliseMatch(raw, info.division))
+    .filter((m): m is Match => m !== null)
+    .sort((x, y) => (x.scheduledAt ?? 0) - (y.scheduledAt ?? 0));
 
   const groups = [...new Set([...teams.values()].map((t) => t.group).filter((g): g is number => g !== null))].sort(
     (x, y) => x - y,

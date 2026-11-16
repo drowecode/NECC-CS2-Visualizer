@@ -10,8 +10,7 @@
 import { cacheLife } from "next/cache";
 import {
   DIVISIONS,
-  getChampionshipMatches,
-  getChampionshipSubscriptions,
+  getDivisionRaw,
   getMatchStats,
   type RawMatchStats,
 } from "./faceit";
@@ -38,9 +37,8 @@ async function fetchLiveLeague(): Promise<LeagueResult> {
   try {
     const divisions: DivisionData[] = [];
     for (const info of DIVISIONS) {
-      const matches = await getChampionshipMatches(info.championshipId);
-      const subscriptions = await getChampionshipSubscriptions(info.championshipId);
-      divisions.push(buildDivision(info, matches, subscriptions));
+      const raw = await getDivisionRaw(info);
+      divisions.push(buildDivision(info, raw.matches, raw.subscriptions, raw.extra));
     }
     return { ok: true, league: { fetchedAt: Date.now(), divisions } };
   } catch (error) {

@@ -93,6 +93,36 @@ assert.deepEqual(
   [1, 2, 3, 4],
 );
 
+// A late team plays its matches in separate "extra" championships. Those matches
+// join the group of the opponent and take the round of the opponent's bye.
+const group2 = (m: RawMatch): RawMatch => ({ ...m, group: 2 });
+const lateMain: RawMatch[] = [
+  group2(played("e1", "p", "q", [[13, 5], [13, 6]])),
+  { ...group2(played("e2", "bye", "p", [[0, 1], [0, 1]])), round: 4 },
+  { ...group2(played("e3", "bye", "q", [[0, 1], [0, 1]])), round: 6 },
+];
+const lateExtra: RawMatch[] = [
+  { ...played("e4", "late", "p", [[13, 10], [13, 11]]), group: 1, round: 1 },
+  { ...played("e5", "q", "late", [[13, 3], [13, 4]]), group: 1, round: 1 },
+];
+const lateDivision = buildDivision({ division: 2, name: "Division 2", championshipId: "z" }, lateMain, [], {
+  matches: lateExtra,
+  subscriptions: [{ group: 1, team: { team_id: "late", name: "LATE", members: [{ user_id: "u1", nickname: "one" }] } }],
+});
+assert.deepEqual(lateDivision.groups, [2]);
+assert.equal(lateDivision.teams.length, 3);
+const lateTeam = lateDivision.teams.find((t) => t.id === "late");
+assert.equal(lateTeam?.group, 2);
+assert.equal(lateTeam?.members.length, 1);
+assert.equal(lateDivision.matches.length, 3);
+assert.equal(lateDivision.matches.find((m) => m.id === "e4")?.round, 4);
+assert.equal(lateDivision.matches.find((m) => m.id === "e5")?.round, 6);
+assert.ok(lateDivision.matches.every((m) => m.group === 2));
+const lateTable = groupStandings(lateDivision, 2);
+assert.equal(lateTable.length, 3);
+assert.equal(lateTable.find((row) => row.teamId === "late")?.played, 2);
+assert.equal(lateTable.find((row) => row.teamId === "late")?.matchWins, 1);
+
 // The sample league builds and ranks every team exactly once.
 const league = mockLeague();
 const national = nationalRankings(league);

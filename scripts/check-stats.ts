@@ -6,8 +6,7 @@
 
 import {
   DIVISIONS,
-  getChampionshipMatches,
-  getChampionshipSubscriptions,
+  getDivisionRaw,
   getMatchStats,
   hasApiKey,
   type RawMatchStats,
@@ -31,11 +30,8 @@ async function main() {
 
   for (const info of DIVISIONS) {
     const started = Date.now();
-    const division = buildDivision(
-      info,
-      await getChampionshipMatches(info.championshipId),
-      await getChampionshipSubscriptions(info.championshipId),
-    );
+    const raw = await getDivisionRaw(info);
+    const division = buildDivision(info, raw.matches, raw.subscriptions, raw.extra);
     const matches = matchesWithPlayedMaps(division);
     const responses = await Promise.all(matches.map((match) => getMatchStats(match.id)));
     const statsByMatch = new Map<string, RawMatchStats | null>(matches.map((match, i) => [match.id, responses[i]]));

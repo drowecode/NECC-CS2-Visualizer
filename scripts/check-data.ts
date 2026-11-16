@@ -4,7 +4,7 @@
  * Reads FACEIT_API_KEY from .env.local.
  */
 
-import { DIVISIONS, getChampionshipMatches, getChampionshipSubscriptions, hasApiKey } from "../lib/faceit";
+import { DIVISIONS, getChampionshipMatches, getDivisionRaw, hasApiKey } from "../lib/faceit";
 import { buildDivision, computeRecords } from "../lib/league";
 
 try {
@@ -22,16 +22,23 @@ async function main() {
   }
 
   for (const info of DIVISIONS) {
-    const [matches, subscriptions] = [
-      await getChampionshipMatches(info.championshipId),
-      await getChampionshipSubscriptions(info.championshipId),
-    ];
-    const division = buildDivision(info, matches, subscriptions);
+    const raw = await getDivisionRaw(info);
+    const division = buildDivision(info, raw.matches, raw.subscriptions, raw.extra);
     const finished = division.matches.filter((m) => m.status === "finished");
     const forfeited = finished.filter((m) => m.forfeitBy !== null);
     const withRounds = finished.filter((m) => m.maps.some((map) => !map.forfeit));
 
     console.log(`\n${info.name}`);
+    if (info.extraChampionshipIds.length > 0) {
+      const extraIds = new Set(raw.extra.matches.map((m) => m.match_id));
+      console.log(`  extra championships: ${info.extraChampionshipIds.length}   matches from them:`);
+      for (const match of division.matches.filter((m) => extraIds.has(m.id))) {
+        console.log(
+          `    ${match.teamNames[0]} ${match.mapScore[0]}-${match.mapScore[1]} ${match.teamNames[1]}` +
+            `  (group ${match.group ?? "?"}, round ${match.round ?? "?"}, ${match.status})`,
+        );
+      }
+    }
     console.log(`  teams: ${division.teams.length}   groups: ${division.groups.join(", ") || "none"}`);
     console.log(
       `  matches: ${division.matches.length}   finished: ${finished.length}   ` +
