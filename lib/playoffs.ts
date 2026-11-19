@@ -66,14 +66,14 @@ export const PLAYOFFS: PlayoffInfo[] = [
     ],
   },
   {
-    championshipId: "1ca50293-fc51-4f19-a7d7-cc06754bc45e",
+    championshipId: "f88aa698-c9ed-4428-af11-58feeea88cc8",
     division: 3,
     region: "East",
     format: "single",
     thirdPlaceMatch: true,
   },
   {
-    championshipId: "abf0294f-73f6-4f89-8510-8e2c819f8b30",
+    championshipId: "c9d8aa3a-edb5-43cb-b7e7-65a5b14f413f",
     division: 3,
     region: "Central",
     format: "single",
