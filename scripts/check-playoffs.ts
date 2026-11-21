@@ -5,7 +5,7 @@
  */
 
 import { getChampionshipMatches, getChampionshipSubscriptions, hasApiKey } from "../lib/faceit";
-import { bracketLabel, buildBracket, PLAYOFFS, type BracketRound } from "../lib/playoffs";
+import { bracketLabel, bracketMatches, buildBracket, PLAYOFFS, type BracketRound } from "../lib/playoffs";
 import type { Match } from "../lib/league";
 
 try {
@@ -43,6 +43,15 @@ async function main() {
       console.log(`  raw group/round: ${matches.map((m) => `${m.group ?? "?"}/${m.round ?? "?"}`).join(", ") || "none"}`);
       const unplaced = matches.filter((m) => !m.teams?.faction1?.faction_id || !m.teams?.faction2?.faction_id).length;
       if (unplaced) console.log(`  matches without both teams yet: ${unplaced}`);
+      // Every match the site leaves out of the bracket, exactly as FACEIT describes it.
+      const shown = new Set(bracketMatches(info, matches).map((m) => m.id));
+      for (const m of matches.filter((raw) => !shown.has(raw.match_id))) {
+        const name = (key: string) => m.teams?.[key]?.name ?? (m.teams?.[key]?.faction_id ? "unnamed team" : "no team yet");
+        console.log(
+          `  NOT SHOWN: group ${m.group ?? "?"} round ${m.round ?? "?"}  status ${m.status ?? "none"}  ` +
+            `${name("faction1")} v ${name("faction2")}  (${m.match_id})`,
+        );
+      }
       console.log(`  state: ${bracket.state}   teams: ${bracket.teams.length}`);
 
       if (bracket.rounds.length === 0) {

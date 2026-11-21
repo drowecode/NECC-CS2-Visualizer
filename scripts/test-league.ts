@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import type { RawMatch } from "../lib/faceit";
 import { buildDivision, groupStandings, isDisqualified, nationalRankings } from "../lib/league";
 import { mockLeague } from "../lib/mock";
-import { bracketLabel, buildBracket } from "../lib/playoffs";
+import { bracketLabel, bracketMatches, buildBracket, playoffMatches } from "../lib/playoffs";
+import { aggregatePlayerStats, matchesWithPlayedMaps } from "../lib/stats";
 
 const team = (id: string) => ({ faction_id: id, name: id.toUpperCase() });
 
@@ -231,6 +232,85 @@ assert.equal(doubleBracket.hasThirdPlace, false);
 assert.equal(doubleBracket.state, "finished");
 assert.equal(bracketLabel(doubleBracket), "Division 1");
 assert.equal(bracketLabel({ division: 2, region: "East" }), "Division 2 East");
+
+// Cancelled matches stay in the bracket with their teams, as on FACEIT, unless they were replayed.
+// The first round can be ordered by team name as well as by match id.
+const cancelledInfo = {
+  championshipId: "pc",
+  division: 3,
+  region: "Test",
+  format: "single" as const,
+  thirdPlaceMatch: true,
+  firstRoundOrder: ["T3", "c1", "T7", "T6"],
+};
+const cancelledRaw: RawMatch[] = [
+  quarter("c1", "t1", "t2"),
+  quarter("c2", "t3", "t4"),
+  quarter("c3", "t5", "t6"),
+  { match_id: "c4", round: 1, status: "SCHEDULED", teams: { faction1: team("t7"), faction2: team("t8") } },
+  { match_id: "c0", round: 1, status: "CANCELLED", teams: { faction1: team("t1"), faction2: team("t2") } }, // replayed as c1
+  { match_id: "c5", round: 2, status: "CANCELLED", teams: { faction1: team("t3"), faction2: team("t1") } },
+  { match_id: "c5b", round: 2, status: "CANCELLED", teams: { faction1: team("t1"), faction2: team("t3") } }, // same pairing again
+  { match_id: "c6", round: 2, status: "CANCELLED", teams: { faction1: team("t8"), faction2: team("t5") } },
+];
+assert.deepEqual(
+  bracketMatches(cancelledInfo, cancelledRaw).map((m) => m.id).sort(),
+  ["c1", "c2", "c3", "c4", "c5", "c6"],
+);
+const withCancelled = buildBracket(cancelledInfo, cancelledRaw, []);
+assert.deepEqual(
+  withCancelled.rounds[0].slots.map((slot) => slot.match?.id),
+  ["c2", "c1", "c4", "c3"],
+);
+assert.deepEqual(
+  withCancelled.rounds[1].slots.map((slot) => [slot.match?.id, slot.match?.status]),
+  [["c5", "cancelled"], ["c6", "cancelled"]],
+);
+assert.equal(withCancelled.state, "live");
+assert.equal(playoffMatches(cancelledInfo, cancelledRaw).length, 4); // stats never see a cancelled match
+
+// Player stats count playoff matches together with the regular season.
+const bracketInfo = { championshipId: "po", division: 1, region: "", format: "single" as const };
+const poMatches = playoffMatches(bracketInfo, [
+  played("p1", "a", "c", [[13, 7], [13, 9]]), // played: counted
+  played("p2", "b", "d", [[0, 1], [0, 1]]), // forfeit: not counted
+  { match_id: "p3", status: "SCHEDULED", teams: { faction1: team("a"), faction2: team("b") } }, // not played yet
+  played("p4", "a", "z", [[13, 2]]), // z only exists in the playoffs
+  { ...played("p5", "a", "b", [[13, 2]]), status: "CANCELLED" },
+]);
+assert.equal(poMatches.length, 4); // the cancelled match is dropped
+assert.deepEqual(
+  matchesWithPlayedMaps(division, poMatches).map((m) => m.id),
+  ["m1", "m2", "m3", "p1", "p4"],
+);
+const mapStats = (rounds: number, teams: [string, number][]) => ({
+  round_stats: { Rounds: String(rounds) },
+  teams: teams.map(([id, kills]) => ({
+    team_id: id,
+    players: [{ player_id: `${id}-1`, nickname: `${id}one`, player_stats: { Kills: String(kills), Deaths: "10", ADR: "80" } }],
+  })),
+});
+const statsByMatch = new Map([
+  ["m1", { rounds: [mapStats(18, [["a", 20], ["b", 9]]), mapStats(24, [["a", 22], ["b", 18]])] }],
+  ["p1", { rounds: [mapStats(20, [["a", 25], ["c", 12]]), mapStats(22, [["a", 15], ["c", 14]])] }],
+  ["p4", { rounds: [mapStats(15, [["a", 5], ["z", 3]])] }],
+  ["p2", null],
+]);
+const seasonOnly = aggregatePlayerStats(division, statsByMatch);
+const withPlayoffs = aggregatePlayerStats(division, statsByMatch, poMatches);
+const line = (stats: typeof withPlayoffs, id: string) => stats.players.find((p) => p.playerId === id);
+assert.equal(line(seasonOnly, "a-1")?.kills, 42);
+assert.equal(line(seasonOnly, "a-1")?.maps, 2);
+assert.equal(seasonOnly.playoffMatchesExpected, 0);
+assert.equal(line(withPlayoffs, "a-1")?.kills, 42 + 40 + 5); // one line per player, season and playoffs added up
+assert.equal(line(withPlayoffs, "a-1")?.maps, 5);
+assert.equal(line(withPlayoffs, "a-1")?.rounds, 18 + 24 + 20 + 22 + 15);
+assert.equal(line(withPlayoffs, "c-1")?.kills, 26);
+assert.equal(line(withPlayoffs, "z-1")?.teamName, "Z"); // name taken from the playoff match
+assert.equal(withPlayoffs.matchesExpected, 5);
+assert.equal(withPlayoffs.matchesWithStats, 3);
+assert.equal(withPlayoffs.playoffMatchesExpected, 2);
+assert.equal(withPlayoffs.mapsCounted, 5);
 
 // The sample league builds and ranks every team exactly once.
 const league = mockLeague();

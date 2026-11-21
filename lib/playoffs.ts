@@ -20,9 +20,10 @@ export type PlayoffInfo = {
   /** Single elimination only: FACEIT plays a 3rd place match in the round before the final. */
   thirdPlaceMatch?: boolean;
   /**
-   * First-round match ids in bracket order, top to bottom. The Data API does
-   * not say where a match sits in the bracket, so without this the first
-   * round is shown in the order FACEIT returns it.
+   * The first round in bracket order, top to bottom. Each entry names one
+   * match, either by its FACEIT match id or by the name of one of its two
+   * teams. The Data API does not say where a match sits in the bracket, so
+   * without this the first round is shown in the order FACEIT returns it.
    */
   firstRoundOrder?: string[];
 };
@@ -54,7 +55,7 @@ export const PLAYOFFS: PlayoffInfo[] = [
     ],
   },
   {
-    championshipId: "476f1560-3cf8-4d06-a921-f810374504d4",
+    championshipId: "13b3c756-5e2f-49ef-a7ef-c6c65b5c0691",
     division: 2,
     region: "West Central",
     format: "double",
@@ -71,6 +72,13 @@ export const PLAYOFFS: PlayoffInfo[] = [
     region: "East",
     format: "single",
     thirdPlaceMatch: true,
+    // By team name, in the order of FACEIT's bracket page.
+    firstRoundOrder: [
+      "UdeM Esports", // v Marist Foxes CS
+      "FLP Phoenixes", // v NEU White
+      "UNC Blue", // v ODU Club CounterStrike
+      "Pace University", // v UNC White
+    ],
   },
   {
     championshipId: "c9d8aa3a-edb5-43cb-b7e7-65a5b14f413f",
@@ -269,6 +277,33 @@ function placeRounds(
   return rounds;
 }
 
+/** A bracket's matches that have both teams known and were not cancelled. */
+export function playoffMatches(info: PlayoffInfo, rawMatches: RawMatch[]): Match[] {
+  return rawMatches
+    .map((raw) => normaliseMatch(raw, info.division))
+    .filter((m): m is Match => m !== null && m.status !== "cancelled");
+}
+
+/**
+ * The matches drawn in the bracket: every match that is not cancelled, plus
+ * cancelled matches that nothing has replaced. FACEIT keeps a cancelled
+ * match in its bracket with both teams and a "Cancelled" label, so the site
+ * does the same. A cancelled match is left out when another match of the
+ * same round already has one of its teams (it was played again), and only
+ * one cancelled match is kept per pairing.
+ */
+export function bracketMatches(info: PlayoffInfo, rawMatches: RawMatch[]): Match[] {
+  const all = rawMatches.map((raw) => normaliseMatch(raw, info.division)).filter((m): m is Match => m !== null);
+  const kept = all.filter((m) => m.status !== "cancelled");
+  const sameRound = (a: Match, b: Match) => (a.group ?? UPPER_GROUP) === (b.group ?? UPPER_GROUP) && (a.round ?? 1) === (b.round ?? 1);
+  for (const match of all) {
+    if (match.status !== "cancelled") continue;
+    const replaced = kept.some((other) => sameRound(other, match) && other.teamIds.some((id) => match.teamIds.includes(id)));
+    if (!replaced) kept.push(match);
+  }
+  return kept;
+}
+
 export function buildBracket(info: PlayoffInfo, rawMatches: RawMatch[], rawSubscriptions: RawSubscription[]): Bracket {
   const bracket = emptyBracket(info);
 
@@ -297,9 +332,7 @@ export function buildBracket(info: PlayoffInfo, rawMatches: RawMatch[], rawSubsc
   bracket.teams = [...teams.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   // Only matches with both teams known can be placed.
-  const matches = rawMatches
-    .map((raw) => normaliseMatch(raw, info.division))
-    .filter((m): m is Match => m !== null && m.status !== "cancelled");
+  const matches = bracketMatches(info, rawMatches);
   if (matches.length === 0) return bracket;
 
   const double = info.format === "double";
@@ -309,7 +342,7 @@ export function buildBracket(info: PlayoffInfo, rawMatches: RawMatch[], rawSubsc
   // First round, in bracket order when we know it.
   const order = info.firstRoundOrder ?? [];
   const position = (m: Match) => {
-    const index = order.indexOf(m.id);
+    const index = order.findIndex((entry) => entry === m.id || m.teamNames.includes(entry));
     return index === -1 ? order.length : index;
   };
   const firstRound = [...(upper.get(1) ?? [])].sort(

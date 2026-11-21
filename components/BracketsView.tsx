@@ -50,6 +50,7 @@ function MatchBox({ match, logos }: { match: Match | null; logos: Logos }) {
     );
   }
   const live = match.status === "ongoing";
+  const cancelled = match.status === "cancelled";
   return (
     <div className={"w-56 rounded-xs border bg-surface " + (live ? "border-accent" : "border-line")}>
       <TeamRow match={match} side={0} logos={logos} />
@@ -57,7 +58,11 @@ function MatchBox({ match, logos }: { match: Match | null; logos: Logos }) {
       <TeamRow match={match} side={1} logos={logos} />
       <div className="flex items-center justify-between border-t border-line px-2 py-1 text-xs text-faint">
         <span className={live ? "text-accent" : ""}>
-          {live ? "Live now" : formatDate(match.status === "finished" ? (match.finishedAt ?? match.scheduledAt) : match.scheduledAt)}
+          {live
+            ? "Live now"
+            : cancelled
+              ? "Cancelled"
+              : formatDate(match.status === "finished" ? (match.finishedAt ?? match.scheduledAt) : match.scheduledAt)}
         </span>
         {match.url ? (
           <a href={match.url} target="_blank" rel="noreferrer" className="underline hover:text-accent">

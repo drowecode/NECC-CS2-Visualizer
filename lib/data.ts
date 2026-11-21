@@ -16,9 +16,9 @@ import {
   getMatchStats,
   type RawMatchStats,
 } from "./faceit";
-import { buildDivision, type DivisionData, type League } from "./league";
+import { buildDivision, type DivisionData, type League, type Match } from "./league";
 import { mockLeague, mockMatchStats, mockPlayoffs } from "./mock";
-import { buildBracket, emptyBracket, PLAYOFFS, type Bracket } from "./playoffs";
+import { buildBracket, emptyBracket, playoffMatches, PLAYOFFS, type Bracket } from "./playoffs";
 import { aggregatePlayerStats, matchesWithPlayedMaps, slimMatchStats, type DivisionStats } from "./stats";
 
 export type LeagueResult = { ok: true; league: League } | { ok: false; error: string };
@@ -67,23 +67,58 @@ export type StatsResult = { ok: true; stats: DivisionStats } | { ok: false; erro
 const STATS_CHUNK_SIZE = 20;
 
 /**
- * Statistics for a small batch of finished matches. A finished match never
- * changes, so a batch is kept for a month. Batches are small on purpose: each
- * one finishes in a second or two, which keeps any single cached call short.
+ * A match that finished this recently is asked for again on every refresh.
+ * FACEIT can take a while to publish a match's statistics after it ends, and
+ * a result can still be corrected by an admin, so a first answer of "no
+ * statistics" must not be kept.
  */
-async function fetchMatchStatsChunk(matchIds: string[]): Promise<(RawMatchStats | null)[]> {
+const RECENT_MATCH_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Statistics for a small batch of finished matches. An old finished match
+ * never changes, so its batch is kept for a month. A batch holding a recently
+ * finished match (`recent`) is refreshed every 10 minutes instead. Batches
+ * are small on purpose: each one finishes in a second or two, which keeps any
+ * single cached call short.
+ */
+async function fetchMatchStatsChunk(matchIds: string[], recent: boolean): Promise<(RawMatchStats | null)[]> {
   // "remote" asks the host (Vercel) to keep these in a shared, durable cache,
   // so a new server instance does not ask FACEIT for every match again.
   "use cache: remote";
-  cacheLife({ stale: 300, revalidate: 2592000, expire: 31536000 });
+  if (recent) cacheLife({ stale: 300, revalidate: 600, expire: 86400 });
+  else cacheLife({ stale: 300, revalidate: 2592000, expire: 31536000 });
   return Promise.all(matchIds.map(async (id) => slimMatchStats(await getMatchStats(id))));
 }
 
 /**
- * Season player statistics for one division. This needs one FACEIT request
- * per played match, fetched in batches one after another. Matches are taken
- * oldest first so earlier batches stay the same as the season goes on and
- * only the newest batch has to be fetched again.
+ * Every playoff match of one division, from all of its brackets. Refreshed on
+ * the same 10 minute cycle as the league, so each round's matches are picked
+ * up as they finish, through to the finals.
+ */
+async function fetchLivePlayoffMatches(divisionNumber: number): Promise<Match[]> {
+  "use cache";
+  cacheLife({ stale: 300, revalidate: 600, expire: 86400 });
+
+  const perBracket = await Promise.all(
+    PLAYOFFS.filter((info) => info.division === divisionNumber).map(async (info) => {
+      // A bracket that cannot be read is left out until the next refresh,
+      // so the rest of the statistics still load.
+      try {
+        return playoffMatches(info, await getChampionshipMatches(info.championshipId));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return perBracket.flat();
+}
+
+/**
+ * Season player statistics for one division, regular season and playoffs
+ * together. This needs one FACEIT request per played match, fetched in
+ * batches one after another. Matches are taken oldest first so earlier
+ * batches stay the same as the season goes on and only the newest batch has
+ * to be fetched again.
  */
 async function loadLiveDivisionStats(divisionNumber: number): Promise<StatsResult> {
   try {
@@ -92,17 +127,25 @@ async function loadLiveDivisionStats(divisionNumber: number): Promise<StatsResul
     const division = league.league.divisions.find((d) => d.division === divisionNumber);
     if (!division) return { ok: false, error: `Division ${divisionNumber} was not found.` };
 
-    const ids = matchesWithPlayedMaps(division)
-      .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0) || a.id.localeCompare(b.id))
-      .map((match) => match.id);
+    const playoffs = await fetchLivePlayoffMatches(divisionNumber);
+    const matches = matchesWithPlayedMaps(division, playoffs).sort(
+      (a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0) || a.id.localeCompare(b.id),
+    );
+    // Measured from the league's own fetch time, not the clock, so the answer
+    // only changes when the league data does.
+    const recentAfter = league.league.fetchedAt - RECENT_MATCH_MS;
 
     const statsByMatch = new Map<string, RawMatchStats | null>();
-    for (let start = 0; start < ids.length; start += STATS_CHUNK_SIZE) {
-      const chunk = ids.slice(start, start + STATS_CHUNK_SIZE);
-      const responses = await fetchMatchStatsChunk(chunk);
-      chunk.forEach((id, i) => statsByMatch.set(id, responses[i]));
+    for (let start = 0; start < matches.length; start += STATS_CHUNK_SIZE) {
+      const chunk = matches.slice(start, start + STATS_CHUNK_SIZE);
+      const recent = chunk.some((match) => match.finishedAt === null || match.finishedAt >= recentAfter);
+      const responses = await fetchMatchStatsChunk(
+        chunk.map((match) => match.id),
+        recent,
+      );
+      chunk.forEach((match, i) => statsByMatch.set(match.id, responses[i]));
     }
-    return { ok: true, stats: aggregatePlayerStats(division, statsByMatch) };
+    return { ok: true, stats: aggregatePlayerStats(division, statsByMatch, playoffs) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Unknown error loading player stats." };
   }

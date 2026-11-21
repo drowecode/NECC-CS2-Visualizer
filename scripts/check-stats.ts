@@ -6,12 +6,14 @@
 
 import {
   DIVISIONS,
+  getChampionshipMatches,
   getDivisionRaw,
   getMatchStats,
   hasApiKey,
   type RawMatchStats,
 } from "../lib/faceit";
 import { buildDivision } from "../lib/league";
+import { playoffMatches, PLAYOFFS } from "../lib/playoffs";
 import { adr, aggregatePlayerStats, hsPercent, kd, matchesWithPlayedMaps } from "../lib/stats";
 
 try {
@@ -32,10 +34,14 @@ async function main() {
     const started = Date.now();
     const raw = await getDivisionRaw(info);
     const division = buildDivision(info, raw.matches, raw.subscriptions, raw.extra);
-    const matches = matchesWithPlayedMaps(division);
+    const brackets = PLAYOFFS.filter((bracket) => bracket.division === info.division);
+    const playoffs = (
+      await Promise.all(brackets.map(async (b) => playoffMatches(b, await getChampionshipMatches(b.championshipId))))
+    ).flat();
+    const matches = matchesWithPlayedMaps(division, playoffs);
     const responses = await Promise.all(matches.map((match) => getMatchStats(match.id)));
     const statsByMatch = new Map<string, RawMatchStats | null>(matches.map((match, i) => [match.id, responses[i]]));
-    const stats = aggregatePlayerStats(division, statsByMatch);
+    const stats = aggregatePlayerStats(division, statsByMatch, playoffs);
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
 
     console.log(`\n${info.name}  (fetched in ${seconds}s)`);
@@ -43,6 +49,21 @@ async function main() {
       `  played matches: ${stats.matchesExpected}   with stats: ${stats.matchesWithStats}   ` +
         `maps counted: ${stats.mapsCounted}   players: ${stats.players.length}`,
     );
+    console.log(
+      `  playoff matches: ${playoffs.length} found, ${stats.playoffMatchesExpected} played and counted, ` +
+        `${playoffs.filter((m) => m.status === "ongoing").length} live, ` +
+        `${playoffs.filter((m) => m.status === "upcoming").length} still to play`,
+    );
+    const missing = matches.filter((match) => !statsByMatch.get(match.id)?.rounds?.length);
+    const playoffIds = new Set(playoffs.map((match) => match.id));
+    for (const match of missing) {
+      const stage = playoffIds.has(match.id) ? "PLAYOFFS" : "regular season";
+      const finished = match.finishedAt ? new Date(match.finishedAt).toISOString().slice(0, 10) : "no finish time";
+      console.log(
+        `  FACEIT has no statistics: ${match.teamNames[0]} v ${match.teamNames[1]}  ` +
+          `[${stage}, finished ${finished}]  (${match.id})`,
+      );
+    }
     const unknownTeams = stats.players.filter((p) => p.teamName === "Unknown team").length;
     if (unknownTeams) console.log(`  players whose team could not be matched: ${unknownTeams}`);
 

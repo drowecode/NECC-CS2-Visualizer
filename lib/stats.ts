@@ -1,10 +1,11 @@
 /**
- * Aggregates FACEIT per-map statistics into season totals per player.
+ * Aggregates FACEIT per-map statistics into season totals per player,
+ * regular season and playoffs together.
  * Pure functions, no network and no Next.js imports.
  */
 
 import type { RawMatchStats } from "./faceit";
-import type { DivisionData } from "./league";
+import type { DivisionData, Match } from "./league";
 
 export type PlayerLine = {
   playerId: string;
@@ -31,6 +32,8 @@ export type DivisionStats = {
   matchesExpected: number;
   /** Of those, how many FACEIT returned statistics for. */
   matchesWithStats: number;
+  /** How many of the expected matches are playoff matches. */
+  playoffMatchesExpected: number;
   mapsCounted: number;
   players: PlayerLine[];
 };
@@ -92,21 +95,39 @@ export function slimMatchStats(stats: RawMatchStats | null): RawMatchStats | nul
   };
 }
 
-/** Matches worth asking FACEIT for statistics: finished, with a map that was really played. */
-export function matchesWithPlayedMaps(division: DivisionData) {
-  return division.matches.filter((match) => match.status === "finished" && match.maps.some((map) => !map.forfeit));
+const hasPlayedMap = (match: Match) => match.status === "finished" && match.maps.some((map) => !map.forfeit);
+
+/**
+ * Matches worth asking FACEIT for statistics: finished, with a map that was
+ * really played. `playoffMatches` are the division's playoff bracket matches,
+ * which live in separate FACEIT championships and are counted with the
+ * regular season.
+ */
+export function matchesWithPlayedMaps(division: DivisionData, playoffMatches: Match[] = []): Match[] {
+  const seen = new Set<string>();
+  return [...division.matches, ...playoffMatches].filter((match) => {
+    if (seen.has(match.id) || !hasPlayedMap(match)) return false;
+    seen.add(match.id);
+    return true;
+  });
 }
 
 export function aggregatePlayerStats(
   division: DivisionData,
   statsByMatch: Map<string, RawMatchStats | null>,
+  playoffMatches: Match[] = [],
 ): DivisionStats {
-  const teamNames = new Map(division.teams.map((team) => [team.id, team.name]));
+  const counted = matchesWithPlayedMaps(division, playoffMatches);
+  const regularIds = new Set(division.matches.map((match) => match.id));
+  // Names from the playoff matches first, so the regular season name wins.
+  const teamNames = new Map<string, string>();
+  for (const match of playoffMatches) match.teamIds.forEach((id, i) => teamNames.set(id, match.teamNames[i]));
+  for (const team of division.teams) teamNames.set(team.id, team.name);
   const players = new Map<string, PlayerLine>();
   let matchesWithStats = 0;
   let mapsCounted = 0;
 
-  for (const match of matchesWithPlayedMaps(division)) {
+  for (const match of counted) {
     const stats = statsByMatch.get(match.id);
     if (!stats?.rounds?.length) continue;
     matchesWithStats += 1;
@@ -166,8 +187,9 @@ export function aggregatePlayerStats(
 
   return {
     division: division.division,
-    matchesExpected: matchesWithPlayedMaps(division).length,
+    matchesExpected: counted.length,
     matchesWithStats,
+    playoffMatchesExpected: counted.filter((match) => !regularIds.has(match.id)).length,
     mapsCounted,
     players: [...players.values()],
   };

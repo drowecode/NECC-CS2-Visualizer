@@ -32,7 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
         <footer className="border-t border-line">
           <div className="mx-auto w-full max-w-6xl px-4 py-4 text-sm text-faint">
-            Fall 2026 regular season. Data from the FACEIT Data API. Not affiliated with NECC or FACEIT.
+            Fall 2026 regular season and playoffs. Data from the FACEIT Data API. Not affiliated with NECC or FACEIT.
           </div>
         </footer>
         {/* Vercel Web Analytics: counts visitors and page views on the deployed site. */}
